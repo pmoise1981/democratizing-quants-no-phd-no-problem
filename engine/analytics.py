@@ -1,4 +1,6 @@
-from typing import Literal, Dict, Any
+# engine/analytics.py
+
+from typing import Literal, Dict, Any, List, Tuple
 
 import numpy as np
 import pandas as pd
@@ -13,6 +15,7 @@ from metrics.performance import (
     metrics_to_dict,
     Period,
 )
+from engine.optimization import optimize_portfolio
 
 StrategyName = Literal[
     "buy_and_hold_spy",
@@ -49,6 +52,36 @@ def get_strategy(strategy_name: StrategyName):
         return DiversifiedCoreETF()
     else:
         raise ValueError(f"Unknown strategy {strategy_name}")
+
+
+def _get_universe(strategy_name: StrategyName) -> Tuple[List[str], Dict[str, float]]:
+    """
+    Define the ETF universe and base weights for each strategy.
+    These base weights represent the original 'rule-based' portfolio.
+    """
+    if strategy_name == "buy_and_hold_spy":
+        tickers = ["SPY"]
+        base_weights = {"SPY": 1.0}
+    elif strategy_name == "sixty_forty_spy_tlt":
+        tickers = ["SPY", "TLT"]
+        base_weights = {"SPY": 0.6, "TLT": 0.4}
+    elif strategy_name == "diversified_core_etf":
+        tickers = [
+            "SPY",
+            "QQQ",
+            "IWM",
+            "EFA",
+            "EEM",
+            "TLT",
+            "LQD",
+            "GLD",
+        ]
+        n = len(tickers)
+        base_weights = {t: 1.0 / n for t in tickers}
+    else:
+        tickers = []
+        base_weights = {}
+    return tickers, base_weights
 
 
 def _slice_series_by_period(series: pd.Series, period: Period) -> pd.Series:
@@ -102,40 +135,15 @@ def _slice_df_by_period(df: pd.DataFrame, period: Period) -> pd.DataFrame:
 
 
 def _compute_asset_contributions(
-    strategy_name: StrategyName,
+    tickers: List[str],
+    base_weights: Dict[str, float],
     prices: pd.DataFrame,
     period: Period,
 ) -> Dict[str, Any]:
     """
-    Approximate asset-level contribution for each strategy using
-    simple static weights and asset-level returns over the selected period.
-
-    This is not a full Brinson attribution, but it's good enough to
-    answer questions like "which ETFs helped or hurt the most?"
+    Approximate asset-level contribution using static weights and
+    per-asset returns/volatility over the selected period.
     """
-    if strategy_name == "buy_and_hold_spy":
-        tickers = ["SPY"]
-        base_weights = {"SPY": 1.0}
-    elif strategy_name == "sixty_forty_spy_tlt":
-        tickers = ["SPY", "TLT"]
-        base_weights = {"SPY": 0.6, "TLT": 0.4}
-    elif strategy_name == "diversified_core_etf":
-        tickers = [
-            "SPY",
-            "QQQ",
-            "IWM",
-            "EFA",
-            "EEM",
-            "TLT",
-            "LQD",
-            "GLD",
-        ]
-        n = len(tickers)
-        base_weights = {t: 1.0 / n for t in tickers}
-    else:
-        return {}
-
-    # Subset and clean prices
     available = [t for t in tickers if t in prices.columns]
     if not available:
         return {
@@ -158,7 +166,6 @@ def _compute_asset_contributions(
             "sharpe_like": {},
         }
 
-    # Daily asset returns
     rets = df.pct_change().dropna(how="all")
     if rets.empty:
         return {
@@ -169,13 +176,8 @@ def _compute_asset_contributions(
             "sharpe_like": {},
         }
 
-    # Per-asset cumulative return over the period
     cum = (1.0 + rets).prod() - 1.0
-
-    # Per-asset annualized volatility
     vol = rets.std(ddof=1) * np.sqrt(252)
-
-    # Simple "Sharpe-like" ratio per asset (just return/vol); used for ranking
     sharpe_like = cum / vol.replace(0.0, np.nan)
 
     return {
@@ -190,6 +192,7 @@ def _compute_asset_contributions(
 def compute_snapshot(
     strategy_name: StrategyName,
     period: Period = "1y",
+    optimization_objective: str | None = None,
 ) -> Dict[str, Any]:
     """
     Run the chosen strategy, compute metrics for a given period,
@@ -213,7 +216,39 @@ def compute_snapshot(
     else:
         rs_series = []
 
-    asset_contrib = _compute_asset_contributions(strategy_name, prices, period)
+    # Universe + asset contributions
+    tickers, base_weights = _get_universe(strategy_name)
+    asset_contrib = _compute_asset_contributions(
+        tickers, base_weights, prices, period
+    )
+
+    # Optional optimization (e.g., max_return / max_sharpe / min_volatility)
+    optimization = None
+    if optimization_objective:
+        try:
+            opt_result = optimize_portfolio(
+                tickers=tickers,
+                prices=prices,
+                period=period,
+                objective=optimization_objective,
+            )
+        except Exception:
+            opt_result = {}
+
+        if opt_result:
+            # Add a human-friendly label
+            obj_labels = {
+                "max_return": "Maximize expected return",
+                "max_sharpe": "Maximize Sharpe ratio",
+                "min_volatility": "Minimize volatility",
+            }
+            optimization = {
+                "objective": optimization_objective,
+                "objective_label": obj_labels.get(
+                    optimization_objective, optimization_objective
+                ),
+                **opt_result,
+            }
 
     snapshot = {
         "strategy": strategy_name,
@@ -224,6 +259,7 @@ def compute_snapshot(
             "series": rs_series,
         },
         "asset_contribution": asset_contrib,
+        "optimization": optimization,
         "meta": {
             "start_date": str(result.daily_returns.index.min().date())
             if not result.daily_returns.empty

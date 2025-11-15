@@ -1,3 +1,5 @@
+# app/app_streamlit.py
+
 import os
 import sys
 
@@ -64,9 +66,25 @@ def main():
             height=100,
         )
 
+        opt_choice = st.selectbox(
+            "Optimization objective (optional)",
+            options=["none", "max_return", "max_sharpe", "min_volatility"],
+            format_func=lambda x: {
+                "none": "No optimization (use original strategy weights)",
+                "max_return": "Optimize for maximum expected return",
+                "max_sharpe": "Optimize for highest Sharpe ratio",
+                "min_volatility": "Optimize for lowest volatility",
+            }[x],
+        )
+        optimization_objective = None if opt_choice == "none" else opt_choice
+
         if st.button("Analyze"):
             with st.spinner("Running strategy and computing metrics..."):
-                snapshot = compute_snapshot(strategy_key, period=period)
+                snapshot = compute_snapshot(
+                    strategy_name=strategy_key,
+                    period=period,
+                    optimization_objective=optimization_objective,
+                )
                 explanation = explain_performance(snapshot, user_question)
 
             st.session_state["snapshot"] = snapshot
@@ -121,7 +139,6 @@ def main():
 
             if rows:
                 df_ac = pd.DataFrame(rows)
-                # Sort by cumulative return descending for readability
                 df_ac = df_ac.sort_values("Cumulative Return", ascending=False)
 
                 st.dataframe(
@@ -134,6 +151,36 @@ def main():
                         }
                     )
                 )
+
+        # Optimized portfolio (if requested)
+        if snapshot and snapshot.get("optimization"):
+            opt = snapshot["optimization"]
+            st.markdown(
+                f"### Optimized Portfolio "
+                f"(objective: {opt.get('objective_label', opt.get('objective'))})"
+            )
+
+            w = opt.get("weights", {})
+            rows_opt = [
+                {"Ticker": t, "Optimized Weight": w[t]} for t in sorted(w.keys())
+            ]
+            if rows_opt:
+                df_opt = pd.DataFrame(rows_opt)
+                st.dataframe(
+                    df_opt.style.format({"Optimized Weight": "{:.2%}"})
+                )
+
+            # Summary metrics
+            exp_ret = opt.get("expected_return")
+            exp_vol = opt.get("expected_volatility")
+            exp_sharpe = opt.get("expected_sharpe")
+
+            st.markdown("**Optimized portfolio stats (annualized):**")
+            st.write(
+                f"- Expected return: **{exp_ret:.2%}**  \n"
+                f"- Expected volatility: **{exp_vol:.2%}**  \n"
+                f"- Expected Sharpe (return / vol): **{exp_sharpe:.2f}**"
+            )
 
         if snapshot:
             st.markdown("### Underlying Metrics (for transparency)")
