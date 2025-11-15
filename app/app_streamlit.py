@@ -18,6 +18,7 @@ from llm.client import explain_performance
 STRATEGY_LABELS = {
     "buy_and_hold_spy": "Buy & Hold – SPY",
     "sixty_forty_spy_tlt": "60/40 – SPY/TLT Monthly Rebalance",
+    "diversified_core_etf": "Diversified Core – Multi-Asset ETF Portfolio",
 }
 
 
@@ -94,6 +95,45 @@ def main():
                     f"### Rolling Sharpe (window = {rs.get('window_days', 'N/A')} trading days)"
                 )
                 st.line_chart(df_rs["sharpe"])
+
+        # Asset-level contribution table
+        if snapshot and snapshot.get("asset_contribution"):
+            st.markdown("### Asset-Level Contribution (return & risk)")
+
+            ac = snapshot["asset_contribution"]
+            tickers = ac.get("tickers", [])
+            weights = ac.get("weights", {})
+            cum_ret = ac.get("cumulative_return", {})
+            vol = ac.get("annualized_volatility", {})
+            sharpe_like = ac.get("sharpe_like", {})
+
+            rows = []
+            for t in tickers:
+                rows.append(
+                    {
+                        "Ticker": t,
+                        "Weight": weights.get(t, 0.0),
+                        "Cumulative Return": cum_ret.get(t, 0.0),
+                        "Ann. Volatility": vol.get(t, 0.0),
+                        "Sharpe-like": sharpe_like.get(t, float("nan")),
+                    }
+                )
+
+            if rows:
+                df_ac = pd.DataFrame(rows)
+                # Sort by cumulative return descending for readability
+                df_ac = df_ac.sort_values("Cumulative Return", ascending=False)
+
+                st.dataframe(
+                    df_ac.style.format(
+                        {
+                            "Weight": "{:.2%}",
+                            "Cumulative Return": "{:.2%}",
+                            "Ann. Volatility": "{:.2%}",
+                            "Sharpe-like": "{:.2f}",
+                        }
+                    )
+                )
 
         if snapshot:
             st.markdown("### Underlying Metrics (for transparency)")

@@ -26,9 +26,13 @@ def explain_performance(snapshot: Dict[str, Any], user_question: str) -> str:
     system_prompt = (
         "You are a quantitative analyst explaining the performance of an "
         "investment strategy to a non-quant professional. Keep explanations "
-        "clear and concise. Use actual metrics from the snapshot. "
-        "Highlight return, volatility, Sharpe ratio, drawdowns, and any "
-        "important changes over the selected period."
+        "clear and concise, but insightful. You are given:\n"
+        "- Overall performance metrics (returns, volatility, Sharpe, drawdowns)\n"
+        "- Rolling Sharpe series over time\n"
+        "- Asset-level contribution information (per-ETF returns, volatility, and weights)\n\n"
+        "Use these to answer questions such as why Sharpe changed, which asset classes "
+        "helped or hurt performance, and how diversification affected risk. "
+        "Avoid formulas; focus on intuitive explanations grounded in the numbers."
     )
 
     snapshot_str = str(snapshot)
@@ -38,14 +42,17 @@ def explain_performance(snapshot: Dict[str, Any], user_question: str) -> str:
         {
             "role": "user",
             "content": (
-                f"Here is the strategy performance snapshot:\n{snapshot_str}\n\n"
+                f"Here is the strategy performance snapshot as a Python dict:\n{snapshot_str}\n\n"
                 f"User question: {user_question}\n\n"
-                "Give a clear, professional explanation (4–6 sentences)."
+                "Explain the answer in 4–7 sentences, explicitly mentioning key metrics "
+                "like Sharpe ratio, annualized return, volatility, drawdowns, and the "
+                "most important contributing assets or ETFs. If certain ETFs clearly "
+                "helped or hurt performance (based on their return and volatility), "
+                "call them out directly."
             ),
         },
     ]
 
-    # NEW API STYLE — required for openai>=1.0.0
     response = client.chat.completions.create(
         model=OPENAI_MODEL,
         messages=messages,
