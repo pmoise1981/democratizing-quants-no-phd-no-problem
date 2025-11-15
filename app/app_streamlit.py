@@ -1,5 +1,3 @@
-# app/app_streamlit.py
-import streamlit as st
 import os
 import sys
 
@@ -9,6 +7,8 @@ PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
+import pandas as pd
+import streamlit as st
 
 from engine.analytics import compute_snapshot, StrategyName
 from metrics.performance import Period
@@ -35,11 +35,11 @@ def main():
     with col1:
         st.subheader("Configuration")
 
-        strategy_key = st.selectbox(
+        strategy_key: StrategyName = st.selectbox(
             "Strategy",
             options=list(STRATEGY_LABELS.keys()),
             format_func=lambda k: STRATEGY_LABELS[k],
-        )  # type: ignore[arg-type]
+        )
 
         period: Period = st.selectbox(
             "Period",
@@ -51,7 +51,7 @@ def main():
                 "1y": "Last 1 year",
                 "max": "Since inception",
             }[p],
-        )  # type: ignore[assignment]
+        )
 
         default_question = (
             "Why is the Sharpe ratio at its current level over this period, "
@@ -80,6 +80,20 @@ def main():
         if explanation:
             st.markdown("### Natural-Language Explanation")
             st.write(explanation)
+
+        # Rolling Sharpe chart
+        if snapshot and "rolling_sharpe" in snapshot:
+            rs = snapshot["rolling_sharpe"]
+            series = rs.get("series", [])
+            if series:
+                df_rs = pd.DataFrame(series)
+                df_rs["date"] = pd.to_datetime(df_rs["date"])
+                df_rs.set_index("date", inplace=True)
+
+                st.markdown(
+                    f"### Rolling Sharpe (window = {rs.get('window_days', 'N/A')} trading days)"
+                )
+                st.line_chart(df_rs["sharpe"])
 
         if snapshot:
             st.markdown("### Underlying Metrics (for transparency)")
